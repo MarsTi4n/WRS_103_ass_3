@@ -1,160 +1,64 @@
-import os
-import sys
+import json
+import re
+from pathlib import Path
 
 import pygame
 
 
-pygame.init()
-
 WIDTH, HEIGHT = 960, 720
 FPS = 60
-ASSET_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+NOTE_LIMIT = 250
+BASE_DIR = Path(__file__).resolve().parent
+ASSET_DIR = BASE_DIR / "assets"
+PLAYER_DIR = BASE_DIR / "player_files"
 
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Guy's Brain Quest")
-clock = pygame.time.Clock()
+BRAINS = ["Anton", "Charlie", "Claire", "Cosmo", "Sal", "Sandy"]
+BRAIN_CENTERS = [85, 237, 390, 550, 710, 865]
+CATEGORIES = ["ASD", "Neurotypical"]
 
-FONT = pygame.font.Font(None, 30)
-SMALL_FONT = pygame.font.Font(None, 24)
-TITLE_FONT = pygame.font.Font(None, 76)
-HEADING_FONT = pygame.font.Font(None, 46)
-
-INK = (25, 38, 48)
-PAPER = (248, 244, 230)
-MINT = (116, 218, 194)
-CORAL = (241, 130, 111)
-GOLD = (246, 202, 91)
-MUTED = (119, 133, 138)
-WHITE = (255, 255, 255)
-GREEN = (89, 176, 127)
-RED = (213, 91, 83)
-
-
-def load_image(relative_path):
-	path = os.path.join(ASSET_ROOT, relative_path)
-	try:
-		return pygame.image.load(path).convert_alpha()
-	except (pygame.error, FileNotFoundError):
-		return None
-
-
-def fit_image(image, size):
-	if image is None:
-		return None
-	return pygame.transform.smoothscale(image, size)
-
-
-backgrounds = {
-	"one": load_image(os.path.join("bg", "background1.jpg")),
-	"two": load_image(os.path.join("bg", "background2.png")),
-}
-guy_image = load_image(os.path.join("ppl", "guy.png"))
-brain_files = [
-	"brain.png",
-	"brain(1).png",
-	"brain(2).png",
-	"brain(3).png",
-	"brain(4).png",
-	"AntonBrain.png",
-]
-brains = [
-	(filename.rsplit(".", 1)[0].replace("brain", "Brain ").strip(),
-	 load_image(os.path.join("ppl", "Brains", filename)))
-	for filename in brain_files
-]
-
-PATHS = {
-	"memory": {
-		"title": "Memory Garden",
-		"subtitle": "Recall, patterns, and the little details",
-		"questions": [
-			{
-				"prompt": "Which kind of memory holds a phone number just long enough to dial it?",
-				"options": ["Working memory", "Procedural memory", "Long-term memory", "Sensory memory"],
-				"answer": 0,
-			},
-			{
-				"prompt": "Which strategy is most useful for remembering a list of unrelated items?",
-				"options": ["Multitasking", "Chunking", "Skipping breaks", "Reading it once"],
-				"answer": 1,
-			},
-			{
-				"prompt": "When is spaced practice generally more effective than cramming?",
-				"options": ["Only during a test", "Never", "When learning over several days", "Only for easy topics"],
-				"answer": 2,
-			},
-		],
-	},
-	"focus": {
-		"title": "Focus Tower",
-		"subtitle": "Attention, choices, and staying on task",
-		"questions": [
-			{
-				"prompt": "What is selective attention?",
-				"options": ["Remembering every sound", "Focusing on relevant information", "Doing two tasks equally", "Avoiding all decisions"],
-				"answer": 1,
-			},
-			{
-				"prompt": "What is a helpful first step when a task feels overwhelming?",
-				"options": ["Add more distractions", "Wait until it disappears", "Break it into smaller steps", "Start every part at once"],
-				"answer": 2,
-			},
-			{
-				"prompt": "A short planned break can help you...",
-				"options": ["Forget the whole task", "Avoid learning", "Work without stopping forever", "Return with renewed attention"],
-				"answer": 3,
-			},
-		],
-	},
+ANSWER_KEY = {
+	"Anton": "ASD",
+	"Charlie": "Neurotypical",
+	"Claire": "ASD",
+	"Cosmo": "Neurotypical",
+	"Sal": "ASD",
+	"Sandy": "Neurotypical",
 }
 
-INTRO_LINES = [
-	"Hey! I'm Guy. Welcome to my brain quest.",
-	"We'll explore two parts of the mind: memory and focus.",
-	"Pick a path, choose a brain, and see what you know. Ready?",
+DIALOGUE = [
+	"Welcome to the interactive portion of the paper.",
+	"Patterns in eye movements and area of focus between people with and without ASD have significant differences.",
+    "This activity explores the idea of using eye-tracking to aid in diagnosis for individuals with ASD.",
+    "I have provided you with 6 simulated individual's brains.",
+     "Using their eye-tracking data, we can simulate you looking through their eyes, focusing on what they focus on,",
+     "and you can try to give a likely diagnosis for each individual.",
+     "Please note - these are not real people, and this is not a real diagnostic tool."
 ]
-ENDING_LINES = [
-	"You made it through both paths! Nice work.",
-	"Every brain learns in its own way. Keep asking questions,",
-	"and I'll see you on the next adventure!",
+
+READING_EXCERPTS = [
+	("A quiet morning", "The bus arrived early. I found a seat by the window and watched the neighborhood wake up: shop lights, wet pavement, and a dog tugging at its leash."),
+	("The museum", "In the gallery, one painting held my attention for a long time. I noticed the tiny marks in the clouds before I noticed the title on the wall."),
+	("A new recipe", "The recipe had twelve steps. I laid out each ingredient first, then followed the list in order. The kitchen smelled like lemon and warm bread."),
 ]
 
-scene = "title"
-dialogue_index = 0
-active_path = None
-selected_brain = None
-question_index = 0
-selected_answer = None
-answer_feedback = None
-completed_paths = set()
-
-
-def draw_background(key):
-	image = backgrounds.get(key)
-	if image is None:
-		image = backgrounds.get("two")
-	if image is None:
-		screen.fill((37, 61, 71))
-		return
-	screen.blit(fit_image(image, (WIDTH, HEIGHT)), (0, 0))
-
-
-def draw_text(text, font, color, position, center=False):
-	surface = font.render(text, True, color)
-	rect = surface.get_rect()
-	if center:
-		rect.center = position
-	else:
-		rect.topleft = position
-	screen.blit(surface, rect)
-	return rect
+COLORS = {
+	"ink": (30, 43, 48),
+	"paper": (250, 246, 232),
+	"teal": (104, 169, 178),
+	"teal_dark": (52, 104, 112),
+	"coral": (227, 119, 99),
+	"gold": (238, 193, 81),
+	"white": (255, 255, 255),
+	"muted": (100, 112, 111),
+	"green": (61, 143, 101),
+	"red": (187, 67, 59),
+}
 
 
 def wrap_text(text, font, max_width):
-	words = text.split()
 	lines = []
 	current = ""
-	for word in words:
+	for word in text.split():
 		candidate = f"{current} {word}".strip()
 		if font.size(candidate)[0] <= max_width:
 			current = candidate
@@ -167,254 +71,635 @@ def wrap_text(text, font, max_width):
 	return lines
 
 
-def draw_wrapped(text, font, color, rect, line_gap=5):
-	y = rect.top
-	for line in wrap_text(text, font, rect.width):
-		draw_text(line, font, color, (rect.left, y))
-		y += font.get_linesize() + line_gap
-
-
-def draw_panel(rect, color=PAPER, alpha=244, border=MINT):
-	panel = pygame.Surface(rect.size, pygame.SRCALPHA)
-	panel.fill((*color, alpha))
-	pygame.draw.rect(panel, (*border, 255), panel.get_rect(), width=3, border_radius=14)
-	screen.blit(panel, rect.topleft)
-
-
-def draw_button(rect, label, enabled=True, accent=MINT):
-	mouse_pos = pygame.mouse.get_pos()
-	hovered = rect.collidepoint(mouse_pos) and enabled
-	fill = accent if enabled else (157, 165, 163)
-	if hovered:
-		fill = tuple(min(255, channel + 16) for channel in fill)
-	pygame.draw.rect(screen, fill, rect, border_radius=12)
-	pygame.draw.rect(screen, INK, rect, width=2, border_radius=12)
-	draw_text(label, FONT, INK, rect.center, center=True)
+def draw_text(surface, text, font, color, position, center=False):
+	rendered = font.render(str(text), True, color)
+	rect = rendered.get_rect()
+	if center:
+		rect.center = position
+	else:
+		rect.topleft = position
+	surface.blit(rendered, rect)
 	return rect
 
 
-def draw_guy(position=(95, 250), max_size=(300, 390)):
-	if guy_image is None:
-		pygame.draw.circle(screen, CORAL, (position[0] + 125, position[1] + 120), 90)
-		draw_text("GUY", HEADING_FONT, PAPER, (position[0] + 125, position[1] + 120), center=True)
-		return
-	image = fit_image(guy_image, max_size)
-	screen.blit(image, position)
+def draw_wrapped(surface, text, font, color, rect, line_gap=4):
+	y = rect.top
+	for line in wrap_text(text, font, rect.width):
+		draw_text(surface, line, font, color, (rect.left, y))
+		y += font.get_linesize() + line_gap
+	return y
 
 
-def begin_path(path_key):
-	global active_path, selected_brain, question_index, selected_answer, answer_feedback, scene
-	active_path = path_key
-	selected_brain = None
-	question_index = 0
-	selected_answer = None
-	answer_feedback = None
-	scene = "brains"
+class BrainGame:
+	def __init__(self):
+		pygame.init()
+		pygame.display.set_caption("Interactive")
+		self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+		pygame.mouse.set_visible(False)
+		self.gaze_position = pygame.mouse.get_pos()
+		self.clock = pygame.time.Clock()
+		self.font = pygame.font.Font(None, 28)
+		self.small_font = pygame.font.Font(None, 22)
+		self.heading_font = pygame.font.Font(None, 44)
+		self.title_font = pygame.font.Font(None, 76)
+		self.big_font = pygame.font.Font(None, 54)
+		self.images = {}
+		self.scene = "title"
+		self.dialogue_index = 0
+		self.open_brain = None
+		self.file_return_scene = "selection"
+		self.activity_type = "reading"
+		self.activity_index = 0
+		self.active_brain = None
+		self.show_heatmaps = False
+		self.note_focused = False
+		self.selection_notice = ""
+		self.player_data = {name: self.load_brain_data(name) for name in BRAINS}
+		self.file_button_rects = {}
+		self.heatmap_cache = {}
+		self.gaze_mask = None
+		self.notes_button_rect = pygame.Rect(886, 18, 54, 46)
+		self.close_notes_rect = pygame.Rect(886, 18, 54, 46)
 
+	def load_image(self, relative_path, size=None, black_transparent=False):
+		key = (str(relative_path), size, black_transparent)
+		if key in self.images:
+			return self.images[key]
+		path = ASSET_DIR / relative_path
+		try:
+			image = pygame.image.load(str(path)).convert_alpha()
+			if black_transparent:
+				image.set_colorkey((0, 0, 0))
+			if size:
+				image = pygame.transform.smoothscale(image, size)
+		except (pygame.error, FileNotFoundError):
+			image = None
+		self.images[key] = image
+		return image
 
-def begin_quiz(brain_index):
-	global selected_brain, question_index, selected_answer, answer_feedback, scene
-	selected_brain = brain_index
-	question_index = 0
-	selected_answer = None
-	answer_feedback = None
-	scene = "quiz"
+	def load_brain_data(self, name):
+		path = PLAYER_DIR / f"{name}.json"
+		try:
+			data = json.loads(path.read_text(encoding="utf-8"))
+		except (OSError, json.JSONDecodeError):
+			data = {}
+		choice = data.get("choice")
+		if choice not in CATEGORIES:
+			choice = None
+		notes = data.get("notes", "")
+		if not isinstance(notes, str):
+			notes = ""
+		return {"choice": choice, "notes": notes[:NOTE_LIMIT]}
 
+	def save_brain_data(self, name):
+		PLAYER_DIR.mkdir(parents=True, exist_ok=True)
+		path = PLAYER_DIR / f"{name}.json"
+		path.write_text(
+			json.dumps(self.player_data[name], ensure_ascii=False, indent=2),
+			encoding="utf-8",
+		)
 
-def advance_dialogue(lines):
-	global dialogue_index, scene
-	dialogue_index += 1
-	if dialogue_index >= len(lines):
-		dialogue_index = 0
-		scene = "choices" if lines is INTRO_LINES else "ending"
+	def reset_brain_files(self):
+		for name in BRAINS:
+			self.player_data[name] = {"choice": None, "notes": ""}
+			self.save_brain_data(name)
 
-
-def draw_title():
-	draw_background("two")
-	shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-	shade.fill((17, 31, 40, 138))
-	screen.blit(shade, (0, 0))
-	draw_text("GUY'S", TITLE_FONT, PAPER, (WIDTH // 2, 185), center=True)
-	draw_text("BRAIN QUEST", TITLE_FONT, MINT, (WIDTH // 2, 260), center=True)
-	draw_text("Two paths. Six brains. Your next big idea.", FONT, PAPER, (WIDTH // 2, 335), center=True)
-	draw_button(pygame.Rect(350, 430, 260, 68), "Start adventure", accent=GOLD)
-	draw_text("Click to begin", SMALL_FONT, PAPER, (WIDTH // 2, 530), center=True)
-
-
-def draw_dialogue(lines, ending=False):
-	draw_background("one" if not ending else "two")
-	draw_guy((70, 190), (310, 420))
-	panel = pygame.Rect(345, 390, 550, 210)
-	draw_panel(panel, color=(249, 246, 233), border=CORAL if ending else MINT)
-	draw_text("GUY", HEADING_FONT, INK, (panel.x + 28, panel.y + 22))
-	draw_wrapped(lines[dialogue_index], FONT, INK, pygame.Rect(panel.x + 28, panel.y + 82, 485, 70))
-	draw_button(pygame.Rect(panel.right - 190, panel.bottom - 62, 160, 42), "Continue", accent=GOLD)
-	draw_text(f"{dialogue_index + 1} / {len(lines)}", SMALL_FONT, MUTED, (panel.x + 30, panel.bottom - 53))
-
-
-def draw_choices():
-	draw_background("two")
-	draw_text("Choose your next path", HEADING_FONT, PAPER, (WIDTH // 2, 95), center=True)
-	draw_text("Complete both paths to meet Guy again.", FONT, PAPER, (WIDTH // 2, 148), center=True)
-	card_y, card_w, card_h = 250, 380, 260
-	for index, key in enumerate(PATHS):
-		path = PATHS[key]
-		x = 70 + index * 440
-		rect = pygame.Rect(x, card_y, card_w, card_h)
-		complete = key in completed_paths
-		draw_panel(rect, color=(248, 244, 230), alpha=245, border=GOLD if complete else MINT)
-		draw_text(path["title"], HEADING_FONT, INK, (rect.centerx, rect.y + 65), center=True)
-		draw_wrapped(path["subtitle"], SMALL_FONT, MUTED, pygame.Rect(x + 32, card_y + 105, card_w - 64, 54))
-		button_label = "Path complete" if complete else "Choose this path"
-		draw_button(pygame.Rect(x + 65, card_y + 175, 250, 54), button_label, not complete,
-					accent=GOLD if complete else MINT)
-	draw_text(f"Paths complete: {len(completed_paths)} / 2", SMALL_FONT, PAPER, (WIDTH // 2, 580), center=True)
-
-
-def draw_brain_selection():
-	draw_background("one")
-	path = PATHS[active_path]
-	draw_text(path["title"], HEADING_FONT, INK, (WIDTH // 2, 70), center=True)
-	draw_text("Pick a brain to begin your quiz", FONT, INK, (WIDTH // 2, 125), center=True)
-	item_w, item_h, gap = 128, 190, 18
-	total_width = len(brains) * item_w + (len(brains) - 1) * gap
-	start_x = (WIDTH - total_width) // 2
-	for index, (name, image) in enumerate(brains):
-		x = start_x + index * (item_w + gap)
-		rect = pygame.Rect(x, 245, item_w, item_h)
-		draw_panel(rect, color=(250, 247, 235), alpha=236, border=CORAL)
-		if image is not None:
-			scaled = fit_image(image, (104, 110))
-			screen.blit(scaled, scaled.get_rect(center=(rect.centerx, rect.y + 75)))
+	def background(self, relative_path, fallback=(221, 207, 165)):
+		image = self.load_image(relative_path, (WIDTH, HEIGHT))
+		if image is None:
+			self.screen.fill(fallback)
 		else:
-			pygame.draw.ellipse(screen, CORAL, pygame.Rect(x + 23, rect.y + 34, 82, 70))
-		draw_text(name, SMALL_FONT, INK, (rect.centerx, rect.y + 150), center=True)
-		draw_button(pygame.Rect(x + 17, rect.bottom + 16, item_w - 34, 42), "Choose", accent=MINT)
-	draw_button(pygame.Rect(390, 590, 180, 48), "Back", accent=GOLD)
+			self.screen.blit(image, (0, 0))
 
+	def panel(self, rect, color=None, border=None):
+		color = color or COLORS["paper"]
+		border = border or COLORS["teal_dark"]
+		pygame.draw.rect(self.screen, color, rect, border_radius=8)
+		pygame.draw.rect(self.screen, border, rect, width=3, border_radius=8)
 
-def draw_quiz():
-	draw_background("two")
-	path = PATHS[active_path]
-	questions = path["questions"]
-	question = questions[question_index]
-	draw_text(path["title"], HEADING_FONT, PAPER, (55, 50))
-	draw_text(f"Question {question_index + 1} of {len(questions)}", FONT, PAPER, (60, 110))
-	draw_text(f"Selected: {brains[selected_brain][0]}", SMALL_FONT, PAPER, (590, 65))
-	panel = pygame.Rect(55, 165, 850, 390)
-	draw_panel(panel, color=(248, 244, 230), alpha=246, border=MINT)
-	draw_wrapped(question["prompt"], HEADING_FONT, INK, pygame.Rect(90, 200, 775, 95), line_gap=4)
-	for index, option in enumerate(question["options"]):
-		option_rect = pygame.Rect(95, 320 + index * 54, 770, 44)
-		if selected_answer == index:
-			fill = GREEN if index == question["answer"] else RED
+	def button(self, rect, label, fill=None, text_color=None):
+		fill = fill or COLORS["teal"]
+		text_color = text_color or COLORS["ink"]
+		hovered = rect.collidepoint(pygame.mouse.get_pos())
+		if hovered:
+			fill = tuple(min(channel + 18, 255) for channel in fill)
+		pygame.draw.rect(self.screen, fill, rect, border_radius=7)
+		pygame.draw.rect(self.screen, COLORS["ink"], rect, width=2, border_radius=7)
+		draw_text(self.screen, label, self.font, text_color, rect.center, center=True)
+
+	def draw_title(self):
+		self.background("bg/MainMenuBG.png")
+		shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+		shade.fill((27, 49, 53, 65))
+		self.screen.blit(shade, (0, 0))
+		draw_text(self.screen, "INTERACTIVE", self.title_font, COLORS["ink"], (WIDTH // 2, 300), center=True)
+		self.button(pygame.Rect(365, 500, 230, 64), "BEGIN", COLORS["gold"])
+
+	def draw_dialogue(self):
+		self.background("bg/TalkToGuyBG.png")
+		guy = self.load_image("ppl/guy.png", (500, 360), black_transparent=True)
+		if guy:
+			self.screen.blit(guy, (5, 300))
+		self.panel(pygame.Rect(340, 365, 570, 230), color=(250, 246, 232))
+		draw_text(self.screen, "GUY", self.heading_font, COLORS["teal_dark"], (370, 390))
+		draw_wrapped(
+			self.screen,
+			DIALOGUE[self.dialogue_index],
+			self.font,
+			COLORS["ink"],
+			pygame.Rect(370, 450, 510, 86),
+		)
+		draw_text(self.screen, "Press Enter to continue", self.small_font, COLORS["muted"], (370, 558))
+
+	def draw_selection(self):
+		self.background("bg/SelectionScene.png")
+		self.file_button_rects = {}
+		for index, name in enumerate(BRAINS):
+			center_x = BRAIN_CENTERS[index]
+			brain = self.load_image(f"ppl/Brains/{name}Brain.png", (138, 104), black_transparent=True)
+			if brain:
+				self.screen.blit(brain, brain.get_rect(center=(center_x, 160)))
+			draw_text(self.screen, name, self.small_font, COLORS["ink"], (center_x, 90), center=True)
+			file_rect = pygame.Rect(center_x - 35, 278, 70, 52)
+			file_image = self.load_image("etc/File.png", (70, 52), black_transparent=True)
+			if file_image:
+				self.screen.blit(file_image, file_rect)
+			else:
+				pygame.draw.rect(self.screen, COLORS["teal"], file_rect, border_radius=5)
+			pygame.draw.rect(self.screen, COLORS["ink"], file_rect, width=1, border_radius=5)
+			self.file_button_rects[name] = file_rect
+			choice = self.player_data[name]["choice"]
+			status = choice if choice else "Not classified"
+			draw_text(self.screen, status, self.small_font, COLORS["teal_dark"], (center_x, 340), center=True)
+
+		self.button(pygame.Rect(190, 480, 170, 58), "READING")
+		self.button(pygame.Rect(395, 480, 170, 58), "IMAGES", COLORS["coral"])
+		complete = all(self.player_data[name]["choice"] for name in BRAINS)
+		self.button(
+			pygame.Rect(600, 480, 220, 58),
+			"CHECK ANSWERS",
+			COLORS["gold"] if complete else (195, 190, 169),
+		)
+		draw_text(self.screen, "Click a file to add notes and choose a label.", self.small_font, COLORS["ink"], (WIDTH // 2, 590), center=True)
+		if self.selection_notice:
+			draw_text(self.screen, self.selection_notice, self.small_font, COLORS["red"], (WIDTH // 2, 635), center=True)
+
+	def draw_file(self):
+		self.background("bg/ActivityBG.png")
+		self.panel(pygame.Rect(82, 45, 796, 620))
+		name = self.open_brain
+		draw_text(self.screen, f"{name}'s file", self.heading_font, COLORS["ink"], (120, 75))
+		brain = self.load_image(f"ppl/Brains/{name}Brain.png", (330, 245), black_transparent=True)
+		image_rect = pygame.Rect(120, 145, 330, 245)
+		if brain:
+			self.screen.blit(brain, brain.get_rect(center=image_rect.center))
+		pygame.draw.rect(self.screen, COLORS["teal_dark"], image_rect, width=2, border_radius=6)
+		draw_text(self.screen, "Classification", self.font, COLORS["ink"], (510, 145))
+
+		data = self.player_data[name]
+		for index, category in enumerate(CATEGORIES):
+			rect = pygame.Rect(510, 190 + index * 58, 24, 24)
+			pygame.draw.rect(self.screen, COLORS["white"], rect, border_radius=3)
+			pygame.draw.rect(self.screen, COLORS["ink"], rect, width=2, border_radius=3)
+			if data["choice"] == category:
+				pygame.draw.line(self.screen, COLORS["green"], (rect.left + 5, rect.centery), (rect.left + 10, rect.bottom - 5), 3)
+				pygame.draw.line(self.screen, COLORS["green"], (rect.left + 10, rect.bottom - 5), (rect.right - 4, rect.top + 4), 3)
+			draw_text(self.screen, category, self.font, COLORS["ink"], (550, rect.top - 2))
+
+		draw_text(self.screen, "Notes", self.font, COLORS["ink"], (120, 415))
+		notes_rect = pygame.Rect(120, 448, 720, 140)
+		pygame.draw.rect(self.screen, COLORS["white"], notes_rect, border_radius=5)
+		border = COLORS["coral"] if self.note_focused else COLORS["teal_dark"]
+		pygame.draw.rect(self.screen, border, notes_rect, width=2, border_radius=5)
+		draw_wrapped(
+			self.screen,
+			data["notes"] or ("Click here and type notes..." if not self.note_focused else ""),
+			self.small_font,
+			COLORS["ink"] if data["notes"] or self.note_focused else COLORS["muted"],
+			notes_rect.inflate(-16, -14),
+			line_gap=2,
+		)
+		draw_text(self.screen, f"{len(data['notes'])}/{NOTE_LIMIT}", self.small_font, COLORS["muted"], (790, 596))
+		self.button(pygame.Rect(120, 606, 145, 42), "BACK", COLORS["gold"])
+		draw_text(self.screen, "Changes save automatically", self.small_font, COLORS["muted"], (480, 620), center=True)
+
+	def activity_heatmap(self, name, stimulus_index):
+		folder = ASSET_DIR / "heatmaps" / name / self.activity_type
+		try:
+			files = list(folder.glob("*.png"))
+		except OSError:
+			return None
+
+		expected_number = stimulus_index + 1
+		for path in files:
+			match = re.match(r"Heatmap(\d+)", path.stem, re.IGNORECASE)
+			if match and int(match.group(1)) == expected_number:
+				return path.relative_to(ASSET_DIR)
+
+		placeholder_name = "Placeholder.png" if stimulus_index == 0 else f"Placeholder{stimulus_index}.png"
+		placeholder = folder / placeholder_name
+		return placeholder.relative_to(ASSET_DIR) if placeholder.is_file() else None
+
+	def activity_item_count(self):
+		if self.activity_type == "reading":
+			return len(READING_EXCERPTS)
+		return len(list((ASSET_DIR / "etc" / "images_activity").glob("*.png")))
+
+	def current_activity_index(self):
+		item_count = self.activity_item_count()
+		return self.activity_index % item_count if item_count else 0
+
+	@staticmethod
+	def heatmap_color(color):
+		if color.a < 80:
+			return None
+		red, green, blue = color.r, color.g, color.b
+		if blue > 110 and blue > red * 1.25 and blue > green * 1.15:
+			return "blue"
+		if green > 110 and green > red * 1.25 and green > blue * 1.25:
+			return "green"
+		if red > 100 and green > 100 and blue < 150:
+			return "yellow"
+		if red > 110 and red > green * 1.2 and red > blue * 1.2:
+			return "red"
+		return None
+
+	def get_heatmap_data(self, name):
+		path = self.activity_heatmap(name, self.current_activity_index())
+		if path is None:
+			return None
+		cache_key = str(path)
+		if cache_key in self.heatmap_cache:
+			return self.heatmap_cache[cache_key]
+
+		heatmap = self.load_image(path)
+		if heatmap is None:
+			return None
+		regions = {color: [] for color in ("blue", "green", "yellow", "red")}
+		for y in range(0, heatmap.get_height(), 6):
+			for x in range(0, heatmap.get_width(), 6):
+				color = self.heatmap_color(heatmap.get_at((x, y)))
+				if color:
+					regions[color].append((x, y))
+		data = (heatmap, regions)
+		self.heatmap_cache[cache_key] = data
+		return data
+
+	def move_mouse_toward_heatmap(self):
+		if self.scene != "activity" or not self.active_brain:
+			return
+		data = self.get_heatmap_data(self.active_brain)
+		if not data:
+			return
+		heatmap, regions = data
+		mouse_x, mouse_y = self.gaze_position
+		mouse_x = max(0, min(heatmap.get_width() - 1, mouse_x))
+		mouse_y = max(0, min(heatmap.get_height() - 1, mouse_y))
+		zone = self.heatmap_color(heatmap.get_at((mouse_x, mouse_y)))
+		targets = regions["red"]
+		if not targets:
+			return
+
+		target_x, target_y = min(
+			targets,
+			key=lambda point: (point[0] - mouse_x) ** 2 + (point[1] - mouse_y) ** 2,
+		)
+		steps = {None: 7.0, "blue": 5.2, "green": 3.8, "yellow": 2.4, "red": 1.0}
+		step = steps[zone]
+		delta_x, delta_y = target_x - mouse_x, target_y - mouse_y
+		distance = (delta_x * delta_x + delta_y * delta_y) ** 0.5
+		if distance <= step or distance == 0:
+			new_position = (target_x, target_y)
 		else:
-			fill = PAPER
-		pygame.draw.rect(screen, fill, option_rect, border_radius=8)
-		pygame.draw.rect(screen, INK, option_rect, width=2, border_radius=8)
-		draw_text(option, SMALL_FONT, INK, (option_rect.x + 16, option_rect.y + 11))
-	if answer_feedback:
-		draw_text(answer_feedback, SMALL_FONT, GREEN if selected_answer == question["answer"] else RED,
-				  (WIDTH // 2, 575), center=True)
-	next_label = "Finish quiz" if question_index == len(questions) - 1 else "Next question"
-	draw_button(pygame.Rect(690, 615, 215, 58), next_label,
-				enabled=selected_answer is not None, accent=GOLD)
+			new_position = (
+				round(mouse_x + delta_x / distance * step),
+				round(mouse_y + delta_y / distance * step),
+			)
+		self.gaze_position = new_position
+		pygame.mouse.set_pos(new_position)
 
+	def handle_mouse_motion(self, position):
+		self.gaze_position = position
 
-def handle_click(position):
-	global scene, dialogue_index, question_index, selected_answer, answer_feedback
-	if scene == "title":
-		if pygame.Rect(350, 430, 260, 68).collidepoint(position):
-			scene = "intro"
-			dialogue_index = 0
-	elif scene == "intro":
-		if pygame.Rect(705, 538, 160, 42).collidepoint(position):
-			advance_dialogue(INTRO_LINES)
-	elif scene == "choices":
-		for index, key in enumerate(PATHS):
-			rect = pygame.Rect(70 + index * 440 + 65, 425, 250, 54)
-			if rect.collidepoint(position) and key not in completed_paths:
-				begin_path(key)
-				break
-	elif scene == "brains":
-		item_w, item_h, gap = 128, 190, 18
-		total_width = len(brains) * item_w + (len(brains) - 1) * gap
-		start_x = (WIDTH - total_width) // 2
-		for index in range(len(brains)):
-			x = start_x + index * (item_w + gap)
-			card = pygame.Rect(x, 245, item_w, item_h)
-			choose = pygame.Rect(x + 17, card.bottom + 16, item_w - 34, 42)
-			if card.collidepoint(position) or choose.collidepoint(position):
-				begin_quiz(index)
+	def get_gaze_mask(self):
+		if self.gaze_mask is None:
+			gaze = self.load_image("etc/gaze.png")
+			if gaze is None:
+				return None
+			shape = pygame.mask.from_threshold(
+				gaze,
+				(217, 217, 217, 255),
+				(48, 48, 48, 0),
+			)
+			mask_surface = shape.to_surface(
+				setcolor=(255, 255, 255, 255),
+				unsetcolor=(0, 0, 0, 0),
+			)
+			self.gaze_mask = pygame.transform.smoothscale(mask_surface, (320, 240))
+		return self.gaze_mask
+
+	def draw_activity(self):
+		self.background("bg/ActivityBG.png")
+		side_rect = pygame.Rect(0, 0, 228, HEIGHT)
+		pygame.draw.rect(self.screen, COLORS["paper"], side_rect)
+		pygame.draw.line(self.screen, COLORS["teal_dark"], (228, 0), (228, HEIGHT), 3)
+		draw_text(self.screen, "FILES", self.heading_font, COLORS["ink"], (22, 24))
+		for index, name in enumerate(BRAINS):
+			row = pygame.Rect(12, 88 + index * 92, 204, 76)
+			if name == self.active_brain:
+				pygame.draw.rect(self.screen, (223, 237, 221), row, border_radius=6)
+			brain_rect = pygame.Rect(18, row.y + 6, 112, 62)
+			brain = self.load_image(f"ppl/Brains/{name}Brain.png", (92, 60), black_transparent=True)
+			if brain:
+				self.screen.blit(brain, brain.get_rect(center=brain_rect.center))
+			draw_text(self.screen, name, self.small_font, COLORS["ink"], (75, row.y + 62), center=True)
+			file_rect = pygame.Rect(158, row.y + 13, 48, 42)
+			file_image = self.load_image("etc/File.png", (48, 42), black_transparent=True)
+			if file_image:
+				self.screen.blit(file_image, file_rect)
+			pygame.draw.rect(self.screen, COLORS["ink"], file_rect, width=1, border_radius=4)
+
+		title = f"Looking through {self.active_brain}'s eyes" if self.active_brain else f"{self.activity_type.title()} activity"
+		draw_text(self.screen, title, self.heading_font, COLORS["ink"], (260, 22))
+		draw_text(self.screen, "Click a brain to view through their eyes. Click its file to edit it.", self.small_font, COLORS["muted"], (260, 69))
+
+		view_rect = pygame.Rect(258, 108, 680, 520)
+		content = pygame.Surface(view_rect.size)
+		content.fill(COLORS["paper"])
+		stimulus = pygame.Surface(view_rect.size, pygame.SRCALPHA)
+		pygame.draw.rect(content, COLORS["teal_dark"], content.get_rect(), width=3, border_radius=8)
+		if self.activity_type == "reading":
+			current_index = self.current_activity_index()
+			title_text, excerpt = READING_EXCERPTS[current_index]
+			draw_text(content, title_text, self.heading_font, COLORS["teal_dark"], (36, 34))
+			draw_wrapped(stimulus, excerpt, self.font, COLORS["ink"], pygame.Rect(36, 112, 600, 290), line_gap=8)
+			draw_text(content, f"Excerpt {current_index + 1}", self.small_font, COLORS["muted"], (36, 464))
+		else:
+			image_paths = sorted((ASSET_DIR / "etc" / "images_activity").glob("*.png"))
+			if image_paths:
+				path = image_paths[self.current_activity_index()]
+				relative = path.relative_to(ASSET_DIR)
+				image = self.load_image(relative, (610, 435))
+				if image:
+					stimulus.blit(image, image.get_rect(center=(340, 260)))
+			draw_text(content, f"Image {self.current_activity_index() + 1}", self.small_font, COLORS["muted"], (36, 474))
+
+		self.screen.blit(content, view_rect)
+		if self.active_brain:
+			try:
+				blurred_stimulus = pygame.transform.box_blur(stimulus, 5)
+			except AttributeError:
+				small = pygame.transform.smoothscale(stimulus, (170, 130))
+				blurred_stimulus = pygame.transform.smoothscale(small, view_rect.size)
+			self.screen.blit(blurred_stimulus, view_rect)
+
+			gaze = self.get_gaze_mask()
+			if gaze:
+				mouse_x, mouse_y = self.gaze_position
+				local_gaze_rect = gaze.get_rect(
+					center=(mouse_x - view_rect.left, mouse_y - view_rect.top)
+				)
+				aperture = pygame.Surface(view_rect.size, pygame.SRCALPHA)
+				aperture.blit(gaze, local_gaze_rect)
+				clear_stimulus = stimulus.copy()
+				clear_stimulus.blit(aperture, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+				self.screen.blit(clear_stimulus, view_rect)
+		else:
+			self.screen.blit(stimulus, view_rect)
+
+		if self.active_brain and self.show_heatmaps:
+			data = self.get_heatmap_data(self.active_brain)
+			if data:
+				heatmap_overlay = data[0].copy()
+				heatmap_overlay.set_alpha(170)
+				self.screen.blit(heatmap_overlay, (0, 0))
+
+		footer = "Enter: next excerpt" if self.activity_type == "reading" else "Enter: next image"
+		if self.active_brain:
+			footer += "    X: stop looking through this brain"
+		else:
+			footer += "    X: return to selection"
+		draw_text(self.screen, footer, self.small_font, COLORS["ink"], (260, 661))
+		open_file = self.load_image("etc/File(Open).png", self.notes_button_rect.size, black_transparent=True)
+		if open_file:
+			self.screen.blit(open_file, self.notes_button_rect)
+		else:
+			self.button(self.notes_button_rect, "NOTES", COLORS["gold"])
+
+	def draw_activity_notes(self):
+		self.background("bg/ActivityBG.png")
+		self.panel(pygame.Rect(70, 55, 820, 610))
+		draw_text(self.screen, "Dr. Guy's notes", self.heading_font, COLORS["ink"], (112, 90))
+		self.button(self.close_notes_rect, "X", COLORS["coral"])
+		draw_text(self.screen, "Observation excerpt", self.font, COLORS["teal_dark"], (112, 170))
+		if self.activity_type == "reading":
+			notes = (
+				"Insert paragraph about reading patterns, lack of focus, and how that relates to ASD. "
+			)
+		else:
+			notes = (
+				"Insert paragraph about how people with ASD tend to focus on different areas of a person's face"
+                "than neurotypical individuals"
+			)
+		draw_wrapped(
+			self.screen,
+			notes,
+			self.font,
+			COLORS["ink"],
+			pygame.Rect(112, 220, 724, 260),
+			line_gap=8,
+		)
+		draw_text(
+			self.screen,
+			"These activities are for observation only and are not a diagnostic tool.",
+			self.small_font,
+			COLORS["muted"],
+			(112, 570),
+		)
+
+	def draw_won(self):
+		self.background("bg/MainMenuBG.png")
+		self.panel(pygame.Rect(170, 205, 620, 280))
+		draw_text(self.screen, "GAME WON!", self.big_font, COLORS["green"], (WIDTH // 2, 280), center=True)
+		draw_text(self.screen, "You checked every file correctly.", self.font, COLORS["ink"], (WIDTH // 2, 350), center=True)
+		self.button(pygame.Rect(360, 410, 240, 56), "PLAY AGAIN", COLORS["gold"])
+
+	def draw_cursor(self):
+		x, y = self.gaze_position
+		outer_points = [
+			(x, y), (x + 2, y + 25), (x + 8, y + 19),
+			(x + 15, y + 31), (x + 21, y + 28),
+			(x + 14, y + 16), (x + 23, y + 15),
+		]
+		inner_points = [(x + 3, y + 5), (x + 5, y + 19), (x + 9, y + 15), (x + 16, y + 27), (x + 17, y + 26), (x + 10, y + 14), (x + 18, y + 14)]
+		pygame.draw.polygon(self.screen, COLORS["ink"], outer_points)
+		pygame.draw.polygon(self.screen, COLORS["paper"], inner_points)
+		pygame.draw.circle(self.screen, COLORS["coral"], (x + 5, y + 7), 2)
+
+	def open_file(self, name, return_scene):
+		self.open_brain = name
+		self.file_return_scene = return_scene
+		self.note_focused = False
+		self.scene = "file"
+		pygame.key.stop_text_input()
+
+	def return_from_file(self):
+		self.scene = self.file_return_scene
+		self.note_focused = False
+		if self.scene == "file":
+			self.scene = "selection"
+
+	def check_answers(self):
+		if not all(self.player_data[name]["choice"] for name in BRAINS):
+			self.selection_notice = "Choose ASD or Neurotypical in all six files first."
+			return
+		if all(self.player_data[name]["choice"] == ANSWER_KEY[name] for name in BRAINS):
+			self.scene = "won"
+		else:
+			self.selection_notice = "Not all correct. Review the files and try again."
+
+	def handle_click(self, position):
+		if self.scene == "title":
+			if pygame.Rect(365, 500, 230, 64).collidepoint(position):
+				self.reset_brain_files()
+				self.selection_notice = ""
+				self.activity_index = 0
+				self.active_brain = None
+				self.show_heatmaps = False
+				self.scene = "dialogue"
+				self.dialogue_index = 0
+		elif self.scene == "selection":
+			for name, rect in self.file_button_rects.items():
+				if rect.collidepoint(position):
+					self.open_file(name, "selection")
+					return
+			if pygame.Rect(190, 480, 170, 58).collidepoint(position):
+				self.activity_type = "reading"
+				self.activity_index = 0
+				self.active_brain = None
+				self.scene = "activity"
+			elif pygame.Rect(395, 480, 170, 58).collidepoint(position):
+				self.activity_type = "images"
+				self.activity_index = 0
+				self.active_brain = None
+				self.scene = "activity"
+			elif pygame.Rect(600, 480, 220, 58).collidepoint(position):
+				self.check_answers()
+		elif self.scene == "file":
+			if pygame.Rect(120, 606, 145, 42).collidepoint(position):
+				self.return_from_file()
 				return
-		if pygame.Rect(390, 590, 180, 48).collidepoint(position):
-			scene = "choices"
-	elif scene == "quiz":
-		question = PATHS[active_path]["questions"][question_index]
-		if selected_answer is None:
-			for index in range(len(question["options"])):
-				option_rect = pygame.Rect(95, 320 + index * 54, 770, 44)
-				if option_rect.collidepoint(position):
-					selected_answer = index
-					answer_feedback = "Correct!" if index == question["answer"] else "Not quite. The highlighted answer is correct."
-					break
-		if pygame.Rect(690, 615, 215, 58).collidepoint(position) and selected_answer is not None:
-			if question_index + 1 < len(PATHS[active_path]["questions"]):
-				question_index += 1
-				selected_answer = None
-				answer_feedback = None
+			for index, category in enumerate(CATEGORIES):
+				rect = pygame.Rect(500, 180 + index * 58, 340, 42)
+				if rect.collidepoint(position):
+					self.player_data[self.open_brain]["choice"] = category
+					self.save_brain_data(self.open_brain)
+					return
+			self.note_focused = pygame.Rect(120, 448, 720, 140).collidepoint(position)
+			if self.note_focused:
+				pygame.key.start_text_input()
 			else:
-				completed_paths.add(active_path)
-				if len(completed_paths) == len(PATHS):
-					scene = "ending"
-					dialogue_index = 0
+				pygame.key.stop_text_input()
+		elif self.scene == "activity":
+			if self.notes_button_rect.collidepoint(position):
+				self.scene = "activity_notes"
+				return
+			for index, name in enumerate(BRAINS):
+				row_y = 88 + index * 92
+				if pygame.Rect(18, row_y + 4, 116, 68).collidepoint(position):
+					self.active_brain = None if self.active_brain == name else name
+					self.gaze_position = position
+					return
+				if pygame.Rect(158, row_y + 13, 48, 42).collidepoint(position):
+					self.open_file(name, "activity")
+					return
+		elif self.scene == "activity_notes":
+			if self.close_notes_rect.collidepoint(position):
+				self.scene = "activity"
+		elif self.scene == "won" and pygame.Rect(360, 410, 240, 56).collidepoint(position):
+			self.scene = "title"
+			self.dialogue_index = 0
+
+	def handle_key(self, event):
+		if self.scene == "dialogue" and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+			self.dialogue_index += 1
+			if self.dialogue_index >= len(DIALOGUE):
+				self.scene = "selection"
+		elif self.scene == "activity":
+			if event.key == pygame.K_y:
+				self.show_heatmaps = not self.show_heatmaps
+			elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+				item_count = self.activity_item_count()
+				if item_count:
+					self.activity_index = (self.activity_index + 1) % item_count
+			elif event.key == pygame.K_x:
+				if self.active_brain:
+					self.active_brain = None
 				else:
-					scene = "choices"
-	elif scene == "ending":
-		if pygame.Rect(705, 538, 160, 42).collidepoint(position):
-			if dialogue_index + 1 < len(ENDING_LINES):
-				dialogue_index += 1
-			else:
-				scene = "title"
-				dialogue_index = 0
-				completed_paths.clear()
+					self.scene = "selection"
+		elif self.scene == "activity_notes" and event.key == pygame.K_ESCAPE:
+			self.scene = "activity"
+		elif self.scene == "file" and self.note_focused and event.key == pygame.K_BACKSPACE:
+			notes = self.player_data[self.open_brain]["notes"]
+			self.player_data[self.open_brain]["notes"] = notes[:-1]
+			self.save_brain_data(self.open_brain)
+		elif self.scene == "file" and event.key == pygame.K_ESCAPE:
+			self.return_from_file()
+
+	def handle_text(self, text):
+		if self.scene != "file" or not self.note_focused:
+			return
+		data = self.player_data[self.open_brain]
+		remaining = NOTE_LIMIT - len(data["notes"])
+		if remaining > 0:
+			data["notes"] += text[:remaining]
+			self.save_brain_data(self.open_brain)
+
+	def draw(self):
+		if self.scene == "title":
+			self.draw_title()
+		elif self.scene == "dialogue":
+			self.draw_dialogue()
+		elif self.scene == "selection":
+			self.draw_selection()
+		elif self.scene == "file":
+			self.draw_file()
+		elif self.scene == "activity":
+			self.draw_activity()
+		elif self.scene == "activity_notes":
+			self.draw_activity_notes()
+		elif self.scene == "won":
+			self.draw_won()
+		self.draw_cursor()
+		pygame.display.flip()
+
+	def run(self, max_frames=None):
+		running = True
+		frames = 0
+		while running and (max_frames is None or frames < max_frames):
+			for event in pygame.event.get():
+				if event.type == pygame.QUIT:
+					running = False
+				elif event.type == pygame.MOUSEMOTION:
+					self.handle_mouse_motion(event.pos)
+				elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+					self.handle_click(event.pos)
+				elif event.type == pygame.TEXTINPUT:
+					self.handle_text(event.text)
+				elif event.type == pygame.KEYDOWN:
+					self.handle_key(event)
+			self.move_mouse_toward_heatmap()
+			self.draw()
+			self.clock.tick(FPS)
+			frames += 1
+		return running
 
 
 def main():
-	global scene
-	running = True
-	while running:
-		for event in pygame.event.get():
-			if event.type == pygame.QUIT:
-				running = False
-			elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-				if scene in ("brains", "choices"):
-					scene = "choices"
-				elif scene == "quiz":
-					scene = "choices"
-				else:
-					running = False
-			elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-				handle_click(event.pos)
-
-		if scene == "title":
-			draw_title()
-		elif scene == "intro":
-			draw_dialogue(INTRO_LINES)
-		elif scene == "choices":
-			draw_choices()
-		elif scene == "brains":
-			draw_brain_selection()
-		elif scene == "quiz":
-			draw_quiz()
-		elif scene == "ending":
-			draw_dialogue(ENDING_LINES, ending=True)
-
-		pygame.display.flip()
-		clock.tick(FPS)
-
+	game = BrainGame()
+	game.run()
+	pygame.mouse.set_visible(True)
 	pygame.quit()
-	sys.exit()
 
 
 if __name__ == "__main__":
